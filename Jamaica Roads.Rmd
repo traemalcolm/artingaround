@@ -1,0 +1,119 @@
+---
+title: "Generative Jamaica Road Art"
+author: Taelor Malcolm
+output: html_document
+---
+
+```{r setup}
+#load libraries
+library(osmdata)
+library(sf)
+library(ggplot2)
+library(ggforce)
+library(dplyr)
+```
+
+```{r data gathering}
+#Jamaica boundary box
+jamaica_bb <- getbb("Jamaica")
+
+# Get all road networks
+roads <- opq(jamaica_bb) %>%
+  add_osm_feature(key = "highway") %>%
+  osmdata_sf()
+
+# Extract line geometries (roads)
+road_lines <- roads$osm_lines
+```
+
+```{r basic road visualization}
+base_plot <- ggplot() +
+  geom_sf(data = road_lines,
+          color = "black",
+          size = 0.3,
+          alpha = 0.5) +
+  theme_void()
+
+print(base_plot)
+```
+
+
+```{r basic road visualization}
+```
+```{r color by road type}
+road_colors <- c(
+  "primary" = "#FF6B6B",
+  "secondary" = "#4ECDC4",
+  "tertiary" = "#45B7D1",
+  "residential" = "#96CEB4",
+  "unclassified" = "#FFEEAD"
+)
+
+art_plot <- ggplot() +
+  geom_sf(data = road_lines,
+          aes(color = highway),
+          size = 0.2,
+          alpha = 0.7) +
+  scale_color_manual(values = road_colors) +
+  theme_void() +
+  theme(legend.position = "none")
+print(art_plot)
+```
+```{r}
+
+```
+
+```{r geometric patterns}
+set.seed(123)
+random_circles <- data.frame(
+  x = runif(50, jamaica_bb[1,1], jamaica_bb[1,2]),
+  y = runif(50, jamaica_bb[2,1], jamaica_bb[2,2]),
+  r = runif(50, 0.01, 0.1)
+)
+
+art_plot <- art_plot +
+  geom_circle(data = random_circles,
+              aes(x0 = x, y0 = y, r = r),
+              fill = NA,
+              color = "#FF6B6B",
+              alpha = 0.3)
+print(art_plot)
+```
+
+```{r gradient mask}
+art_plot <- art_plot +
+  geom_regon(aes(x0 = mean(jamaica_bb[1,]), 
+                 y0 = mean(jamaica_bb[2,]),
+                 sides = 200,
+                 r = 1.5,
+                 angle = 0),
+             fill = radialGradient(c("white", "transparent")),
+  alpha = 0.2)
+print(art_plot)
+```
+
+```{r}
+# Generate random noise points
+noise_points <- data.frame(
+  x = runif(5000, jamaica_bb[1,1], jamaica_bb[1,2]),
+  y = runif(5000, jamaica_bb[2,1], jamaica_bb[2,2])
+)
+
+art_plot <- art_plot +
+  geom_point(data = noise_points,
+             aes(x = x, y = y),
+             size = 0.1,
+             alpha = 0.05,
+             color = "white")
+print(art_plot)
+```
+
+```{r}
+# Polar coordinate transformation
+art_plot <- art_plot +
+  coord_polar() +
+  scale_x_continuous(limits = c(-78.5, -76)) +
+  scale_y_continuous(limits = c(17.7, 18.5))
+print(art_plot)
+```
+
