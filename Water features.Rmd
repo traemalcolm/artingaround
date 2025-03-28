@@ -1,0 +1,150 @@
+---
+title: "Water features"
+output: html_document
+---
+
+```{r setup}
+library(sf)
+library(osmdata)
+library(elevatr)
+library(ggplot2)
+library(ambient)
+library(terra)
+library(tidyr)
+library(tidyverse)
+library(progress)
+```
+
+```{r bounding box}
+get_safe_bb <- function(location) {
+  bb <- tryCatch(
+    getbb(location),
+    error = function(e) matrix(c(-78.4, -76.2, 17.7, 18.5), nrow = 2)
+  )
+  if(anyNA(bb)) matrix(c(-78.4, -76.2, 17.7, 18.5), nrow = 2) else bb
+}
+
+jamaica_bb <- get_safe_bb("Jamaica")
+print(jamaica_bb)
+```
+
+```{r elevation data}
+get_jamaica_elevation <- function() {
+  # Create SF polygon with explicit CRS
+  jamaica_poly <- st_as_sfc(st_bbox(c(
+    xmin = -78.4, xmax = -76.2,
+    ymin = 17.7, ymax = 18.5
+  ), crs = 4326)) |> 
+    st_as_sf()
+
+  tryCatch({
+    # Get elevation with explicit CRS
+    elevatr::get_elev_raster(
+      locations = jamaica_poly,
+      z = 9,
+      clip = "locations",
+      override_size_check = TRUE
+    ) |> 
+      terra::rast() |> 
+      terra::project("EPSG:4326")
+  }, error = function(e) {
+    message("Elevation fallback: Using SRTM data")
+    elevatr::get_elev_raster(
+      locations = jamaica_poly,
+      src = "aws",
+      prj = st_crs(jamaica_poly)$wkt,
+      z = 9
+    )
+  })
+}
+
+# Get elevation data
+elev_rast <- get_jamaica_elevation()
+
+```
+```{r elevation plot}
+elev_df <- as.data.frame(elev_rast, xy = TRUE) |> 
+  setNames(c("x", "y", "elevation")) |> 
+  tidyr::drop_na()
+
+# Create elevation contours
+contours <- elev_df |> 
+  terra::rast() |> 
+  terra::as.contour(levels = seq(0, 2000, by = 50))
+```
+
+
+```{r water features}
+get_water_features <- function() {
+  # Create SF object with matching CRS
+  jamaica_sf <- st_as_sfc(st_bbox(c(
+    xmin = -78.4, xmax = -76.2,
+    ymin = 17.7, ymax = 18.5
+  ), crs = 4326))
+
+  # Get OSM water data
+  opq(st_bbox(jamaica_sf)) |> 
+    add_osm_feature(key = "waterway") |> 
+    osmdata_sf() |> 
+    pluck("osm_lines") |> 
+    st_transform(4326) |> 
+    st_intersection(jamaica_sf)
+}
+
+water_features <- get_water_features()
+```
+
+```{r wave generator}
+create_wave_texture <- function() {
+  # Create grid for wave pattern
+  grid <- expand.grid(
+    x = seq(-78.4, -76.2, length.out = 500),
+    y = seq(17.7, 18.5, length.out = 500)
+  )
+  
+  # Generate procedural waves using elevation
+  grid |> 
+    mutate(
+      wave = ambient::gen_simplex(x, y) * 
+        pnorm(elev_df$elevation[match(paste(x,y), paste(elev_df$x, elev_df$y))]),
+      alpha = scales::rescale(wave, to = c(0.1, 0.4))
+    )
+}
+
+wave_data <- create_wave_texture()
+```
+
+```{r visualization}
+ggplot() +
+  # Elevation base
+  geom_raster(
+    data = elev_df,
+    aes(x, y, alpha = elevation),
+    fill = "#1a2f38"
+  ) +
+  
+  # Wave texture
+  geom_tile(
+    data = wave_data,
+    aes(x, y, alpha = alpha),
+    fill = "#274156"
+  ) +
+  
+  # Water features
+  geom_sf(
+    data = water_features,
+    color = "#5c9ead",
+    linewidth = 0.3
+  ) +
+  
+  # Styling
+  scale_alpha_identity() +
+  coord_sf(crs = 4326) +
+  theme_void() +
+  theme(plot.background = element_rect(fill = "#0a1920"))
+```
+
+```{r}
+ggsave("jamaica_elevation_waves.png", width = 16, height = 16, dpi = 600)
+```
+

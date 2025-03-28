@@ -1,0 +1,138 @@
+---
+title: "flowing water"
+output: html_document
+---
+
+```{r}
+# FLOWING WATER VISUALIZATION WORKFLOW ----
+library(sf)
+library(ggplot2)
+library(ambient)
+library(progress)
+library(rnaturalearth)
+
+```
+
+```{r}
+# 1. COASTLINE PREPARATION ----
+coast <- rnaturalearth::ne_countries(
+  country = "Jamaica",
+  scale = "large",
+  returnclass = "sf"
+) |> 
+  st_geometry() |> 
+  st_cast("LINESTRING")
+
+# 2. FLOW FIELD GENERATION ----
+create_flow_field <- function(bbox, resolution = 0.01) {
+  # Generate base noise pattern
+  grid <- expand.grid(
+    x = seq(bbox[1], bbox[3], by = resolution),
+    y = seq(bbox[2], bbox[4], by = resolution)
+  )
+  
+  # Calculate distance to coast for each point
+  coast_points <- st_sample(coast, 1000) |> 
+    st_coordinates()
+  
+  # Find nearest coastal direction using k-nearest neighbors
+  grid$angle <- apply(grid, 1, function(p) {
+    dx <- coast_points[,1] - p[1]
+    dy <- coast_points[,2] - p[2]
+    angles <- atan2(dy, dx)
+    mean(angles) + runif(1, -0.2, 0.2)
+  })
+  
+  # Add noise-based variation
+  grid$angle <- grid$angle + 
+    gen_simplex(grid$x, grid$y, frequency = 0.5) * 0.5
+  
+  grid
+}
+
+# Jamaica bounding box
+jamaica_bbox <- c(-78.4, 17.7, -76.2, 18.5)
+flow_field <- create_flow_field(jamaica_bbox, resolution = 0.02)
+
+# 3. PARTICLE SIMULATION ----
+simulate_particles <- function(flow_field, n = 5000) {
+  pb <- progress_bar$new(total = n)
+  particles <- list()
+  
+  for(i in 1:n) {
+    # Random starting point near rivers
+    start_point <- c(
+      runif(1, -78.0, -76.5),
+      runif(1, 17.9, 18.3)
+    )
+    
+    path <- matrix(nrow = 20, ncol = 2)
+    path[1,] <- start_point
+    
+    for(step in 2:20) {
+      # Find nearest flow angle
+      distances <- sqrt(
+        (flow_field$x - path[step-1,1])^2 +
+        (flow_field$y - path[step-1,2])^2
+      )
+      closest <- which.min(distances)
+      angle <- flow_field$angle[closest]
+      
+      # Update position
+      path[step,1] <- path[step-1,1] + cos(angle)*0.005
+      path[step,2] <- path[step-1,2] + sin(angle)*0.005
+    }
+    
+    particles[[i]] <- data.frame(
+      x = path[,1],
+      y = path[,2],
+      group = i,
+      alpha = seq(1, 0.1, length.out = 20)
+    )
+    
+    pb$tick()
+  }
+  
+  do.call(rbind, particles)
+}
+
+# Generate particle paths (reduce n for faster testing)
+water_particles <- simulate_particles(flow_field, n = 1000)
+
+# 4. VISUALIZATION ----
+ggplot() +
+  # Base ocean
+  geom_sf(
+    data = st_as_sfc(st_bbox(jamaica_bbox)),
+    fill = "#1a3047",
+    color = NA
+  ) +
+  
+  # Particle paths
+  geom_path(
+    data = water_particles,
+    aes(x, y, group = group, alpha = alpha),
+    color = "#5c9ead",
+    linewidth = 0.3,
+    lineend = "round"
+  ) +
+  
+  # Coastline
+  geom_sf(
+    data = coast,
+    color = "#d4e4eb",
+    linewidth = 0.8
+  ) +
+  
+  # Styling
+  scale_alpha_identity() +
+  coord_sf(xlim = c(-78.4, -76.2), ylim = c(17.7, 18.5)) +
+  theme_void() +
+  theme(
+    plot.background = element_rect(fill = "#0a1920", color = NA)
+  )
+
+# 5. EXPORT ----
+ggsave("jamaica_flowing_water.png", width = 16, height = 16, dpi = 600)
+```
+
